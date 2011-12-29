@@ -333,12 +333,13 @@ module ActiveRecord
                                  v = value.to_i if column.is_integer? && value.present?
                                  "@#{index} #{column.sql_type_for_statement}"
                                elsif column.acts_like?(:string)
-                                 "@#{index} nvarchar(max)"
+                                 "@#{index} varchar(256)"
                                elsif column.is_a?(Fixnum)
                                  v = value.to_i
                                  "@#{index} int"
                                else
-                                 raise "Unknown bind columns. We can account for this."
+                                 "@#{index} int"
+                                 #raise "Unknown bind columns. We can account for this."
                                end
             quoted_value = ar_column ? quote(v,column) : quote(v,nil)
             params << "@#{index} = #{quoted_value}"
