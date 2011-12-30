@@ -210,7 +210,6 @@ module ActiveRecord
               AND KCU.CONSTRAINT_CATALOG = TC.CONSTRAINT_CATALOG
               AND KCU.CONSTRAINT_SCHEMA = TC.CONSTRAINT_SCHEMA
             WHERE columns.TABLE_NAME = @0
-              AND columns.TABLE_SCHEMA = #{table_schema.blank? ? "schema_name()" : "@1"}
             ORDER BY columns.ordinal_position
           }.gsub(/[ \t\r\n]+/,' ')
           binds = [['table_name', table_name]]

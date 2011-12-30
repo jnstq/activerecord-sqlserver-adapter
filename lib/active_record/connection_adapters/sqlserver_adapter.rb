@@ -216,7 +216,7 @@ module ActiveRecord
         initialize_sqlserver_caches
         use_database
         unless SUPPORTED_VERSIONS.include?(@database_year)
-          raise NotImplementedError, "Currently, only #{SUPPORTED_VERSIONS.to_sentence} are supported. We got back #{@database_version}."
+          #raise NotImplementedError, "Currently, only #{SUPPORTED_VERSIONS.to_sentence} are supported. We got back #{@database_version}."
         end
       end
       
