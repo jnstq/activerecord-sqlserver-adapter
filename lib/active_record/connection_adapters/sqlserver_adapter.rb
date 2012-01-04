@@ -435,7 +435,7 @@ module ActiveRecord
                           ODBC.connect config[:dsn], config[:username], config[:password]
                         end.tap do |c|  
                           begin
-                            c.use_time = true
+                            #c.use_time = true
                             c.use_utc = ActiveRecord::Base.default_timezone == :utc
                           rescue Exception => e
                             warn "Ruby ODBC v0.99992 or higher is required."
