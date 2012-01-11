@@ -28,7 +28,7 @@ module ActiveRecord
           module TimeStamp
             
             def to_date
-              ODBC.to_date(self)
+              Date.new(year,month,day)
             end
             
           end
