@@ -26,7 +26,9 @@ module ActiveRecord
             
           end
           module TimeStamp
-            
+            def to_s(format = nil)
+              to_date.to_s(format)
+            end            
             def to_date
               Date.new(year,month,day)
             end

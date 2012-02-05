@@ -68,7 +68,7 @@ module ActiveRecord
 
         def quoted_datetime(value)
           if value.acts_like?(:time)
-            value.is_a?(Date) ? quoted_value_acts_like_time_filter(value).to_time.xmlschema.to(18) : quoted_value_acts_like_time_filter(value).iso8601.to(22)
+            value.is_a?(Date) ? quoted_value_acts_like_time_filter(value).to_time.xmlschema.to(18) : quoted_value_acts_like_time_filter(value).iso8601.to(18)
           else
             quoted_date(value)
           end
@@ -76,7 +76,7 @@ module ActiveRecord
         
         def quoted_full_iso8601(value)
           if value.acts_like?(:time)
-            value.is_a?(Date) ? quoted_value_acts_like_time_filter(value).to_time.xmlschema.to(18) : quoted_value_acts_like_time_filter(value).iso8601.to(22)
+            value.is_a?(Date) ? quoted_value_acts_like_time_filter(value).to_time.xmlschema.to(18) : quoted_value_acts_like_time_filter(value).iso8601.to(18)
           else
             quoted_date(value)
           end
