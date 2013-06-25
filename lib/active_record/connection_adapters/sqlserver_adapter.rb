@@ -1,18 +1,22 @@
+require 'base64'
 require 'arel/visitors/sqlserver'
 require 'active_record'
+require 'active_record/base'
+require 'active_support/concern'
+require 'active_support/core_ext/string'
 require 'active_record/connection_adapters/abstract_adapter'
 require 'active_record/connection_adapters/sqlserver/core_ext/active_record'
 require 'active_record/connection_adapters/sqlserver/core_ext/database_statements'
+require 'active_record/connection_adapters/sqlserver/core_ext/explain'
+require 'active_record/connection_adapters/sqlserver/core_ext/relation'
 require 'active_record/connection_adapters/sqlserver/database_limits'
 require 'active_record/connection_adapters/sqlserver/database_statements'
 require 'active_record/connection_adapters/sqlserver/errors'
 require 'active_record/connection_adapters/sqlserver/schema_cache'
 require 'active_record/connection_adapters/sqlserver/schema_statements'
+require 'active_record/connection_adapters/sqlserver/showplan'
 require 'active_record/connection_adapters/sqlserver/quoting'
 require 'active_record/connection_adapters/sqlserver/utils'
-require 'active_record/connection_adapters/sqlserver/version'
-require 'active_support/core_ext/string'
-require 'base64'
 
 module ActiveRecord
   
@@ -20,12 +24,11 @@ module ActiveRecord
     
     def self.sqlserver_connection(config) #:nodoc:
       config = config.symbolize_keys
-      config.reverse_merge! :mode => :dblib, :host => 'localhost', :username => 'sa', :password => ''
+      config.reverse_merge! :mode => :dblib
       mode = config[:mode].to_s.downcase.underscore.to_sym
       case mode
       when :dblib
         require 'tiny_tds'
-        warn("TinyTds v0.4.3 or higher required. Using #{TinyTds::VERSION}") unless TinyTds::Client.instance_methods.map(&:to_s).include?("active?")
       when :odbc
         raise ArgumentError, 'Missing :dsn configuration.' unless config.has_key?(:dsn)
         require 'odbc'
@@ -92,7 +95,7 @@ module ActiveRecord
       
       def sql_type_for_statement
         if is_integer? || is_real?
-          sql_type.sub(/\(\d+\)/,'')
+          sql_type.sub(/\((\d+)?\)/,'')
         else
           sql_type
         end
@@ -169,20 +172,22 @@ module ActiveRecord
       
       include Sqlserver::Quoting
       include Sqlserver::DatabaseStatements
+      include Sqlserver::Showplan
       include Sqlserver::SchemaStatements
       include Sqlserver::DatabaseLimits
       include Sqlserver::Errors
-      include Sqlserver::Version
       
+      VERSION                     = File.read(File.expand_path("../../../../VERSION",__FILE__)).strip
       ADAPTER_NAME                = 'SQLServer'.freeze
       DATABASE_VERSION_REGEXP     = /Microsoft SQL Server\s+"?(\d{4}|\w+)"?/
-      SUPPORTED_VERSIONS          = [2005,2008,2010,2011].freeze
+      SUPPORTED_VERSIONS          = [2005,2008,2010,2011,2012]
       
       attr_reader :database_version, :database_year, :spid, :product_level, :product_version, :edition
       
       cattr_accessor :native_text_database_type, :native_binary_database_type, :native_string_database_type,
-                     :log_info_schema_queries, :enable_default_unicode_types, :auto_connect, :retry_deadlock_victim,
-                     :cs_equality_operator, :lowercase_schema_reflection, :auto_connect_duration
+                     :enable_default_unicode_types, :auto_connect, :retry_deadlock_victim,
+                     :cs_equality_operator, :lowercase_schema_reflection, :auto_connect_duration,
+                     :showplan_option
       
       self.enable_default_unicode_types = true
       
@@ -193,9 +198,10 @@ module ActiveRecord
         @schema_cache = Sqlserver::SchemaCache.new self
         @visitor = Arel::Visitors::SQLServer.new self
         # Our Responsibility
+        @config = config
         @connection_options = config
         connect
-        @database_version = info_schema_query { select_value('SELECT @@version') }
+        @database_version = select_value 'SELECT @@version', 'SCHEMA'
         @database_year = begin
                            if @database_version =~ /Microsoft SQL Azure/i
                              @sqlserver_azure = true
@@ -207,9 +213,9 @@ module ActiveRecord
                          rescue
                            0
                          end
-        @product_level    = info_schema_query { select_value("SELECT CAST(SERVERPROPERTY('productlevel') AS VARCHAR(128))") }
-        @product_version  = info_schema_query { select_value("SELECT CAST(SERVERPROPERTY('productversion') AS VARCHAR(128))") }
-        @edition          = info_schema_query { select_value("SELECT CAST(SERVERPROPERTY('edition') AS VARCHAR(128))") }
+        @product_level    = select_value "SELECT CAST(SERVERPROPERTY('productlevel') AS VARCHAR(128))", 'SCHEMA'
+        @product_version  = select_value "SELECT CAST(SERVERPROPERTY('productversion') AS VARCHAR(128))", 'SCHEMA'
+        @edition          = select_value "SELECT CAST(SERVERPROPERTY('edition') AS VARCHAR(128))", 'SCHEMA'
         initialize_dateformatter
         use_database
         unless SUPPORTED_VERSIONS.include?(@database_year)
@@ -239,7 +245,19 @@ module ActiveRecord
         true
       end
       
+      def supports_bulk_alter?
+        false
+      end
+      
       def supports_savepoints?
+        true
+      end
+      
+      def supports_index_sort_order?
+        true
+      end
+      
+      def supports_explain?
         true
       end
       
@@ -310,6 +328,10 @@ module ActiveRecord
       
       def sqlserver_2011?
         @database_year == 2011
+      end
+      
+      def sqlserver_2012?
+        @database_year == 2012
       end
       
       def sqlserver_azure?
@@ -416,6 +438,7 @@ module ActiveRecord
                             client.execute("SET CURSOR_CLOSE_ON_COMMIT OFF").do
                             client.execute("SET IMPLICIT_TRANSACTIONS OFF").do
                           end
+                          client.execute("SET TEXTSIZE 2147483647").do
                         end
                       when :odbc
                         if config[:dsn].include?(';')

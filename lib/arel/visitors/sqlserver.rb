@@ -102,7 +102,7 @@ module Arel
       
       def visit_Arel_Nodes_UpdateStatement(o)
         if o.orders.any? && o.limit.nil?
-          o.limit = Nodes::Limit.new(2147483647)
+          o.limit = Nodes::Limit.new(9223372036854775807)
         end
         super
       end
@@ -154,9 +154,9 @@ module Arel
           projections = projections.map { |x| projection_without_expression(x) }
         end
         [ ("SELECT" if !windowed),
-          (visit(core.set_quantifier) if core.set_quantifier),
+          (visit(core.set_quantifier) if core.set_quantifier && !windowed),
           (visit(o.limit) if o.limit && !windowed),
-          (projections.map{ |x| visit(x) }.join(', ')),
+          (projections.map{ |x| v = visit(x); v == "1" ? "1 AS [__wrp]" : v }.join(', ')),
           (source_with_lock_for_select_statement(o)),
           ("WHERE #{core.wheres.map{ |x| visit(x) }.join ' AND ' }" unless core.wheres.empty?),
           ("GROUP BY #{groups.map { |x| visit x }.join ', ' }" unless groups.empty?),
@@ -166,15 +166,18 @@ module Arel
       end
 
       def visit_Arel_Nodes_SelectStatementWithOffset(o)
+        core = o.cores.first
+        o.limit ||= Arel::Nodes::Limit.new(9223372036854775807)
         orders = rowtable_orders(o)
         [ "SELECT",
           (visit(o.limit) if o.limit && !windowed_single_distinct_select_statement?(o)),
           (rowtable_projections(o).map{ |x| visit(x) }.join(', ')),
           "FROM (",
-            "SELECT ROW_NUMBER() OVER (ORDER BY #{orders.map{ |x| visit(x) }.join(', ')}) AS [__rn],",
+            "SELECT #{core.set_quantifier ? 'DISTINCT DENSE_RANK()' : 'ROW_NUMBER()'} OVER (ORDER BY #{orders.map{ |x| visit(x) }.join(', ')}) AS [__rn],",
             visit_Arel_Nodes_SelectStatementWithOutOffset(o,true),
           ") AS [__rnt]",
           (visit(o.offset) if o.offset),
+          "ORDER BY [__rnt].[__rn] ASC"
         ].compact.join ' '
       end
 

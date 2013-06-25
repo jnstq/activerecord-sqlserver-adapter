@@ -337,7 +337,7 @@ class AdapterTestSqlserver < ActiveRecord::TestCase
   end
   
   context 'For Quoting' do
-    
+
     should 'return 1 for #quoted_true' do
       assert_equal '1', @connection.quoted_true
     end
@@ -366,7 +366,129 @@ class AdapterTestSqlserver < ActiveRecord::TestCase
       assert_equal '[foo].[bar]', @connection.quote_column_name('foo.bar')
       assert_equal '[foo].[bar].[baz]', @connection.quote_column_name('foo.bar.baz')
     end
-    
+
+    context "#quote" do
+
+      context "string and multibyte values" do
+
+        context "on an activerecord :integer column" do
+
+          setup do
+            @column = Post.columns_hash['id']
+          end
+
+          should "return 0 for empty string" do
+            assert_equal '0', @connection.quote('', @column)
+          end
+
+        end
+
+        context "on an activerecord :string column or with any value" do
+
+          should "surround it when N'...'" do
+            assert_equal "N'foo'", @connection.quote("foo")
+          end
+
+          should "escape all single quotes by repeating them" do
+            assert_equal "N'''quotation''s'''", @connection.quote("'quotation's'")
+          end
+
+        end
+
+      end
+
+      context "date and time values" do
+
+        setup do
+          @date = Date.parse '2000-01-01'
+          @column = SqlServerChronic.columns_hash['datetime']
+        end
+
+        context "on a sql datetime column" do
+
+          should "call quoted_datetime and surrounds its result with single quotes" do
+            assert_equal "'01-01-2000'", @connection.quote(@date, @column)
+          end
+
+        end
+
+      end
+
+    end
+
+    context "#quoted_datetime" do
+      
+      setup do
+        @iso_string = '2001-02-03T04:05:06-0700'
+        @date = Date.parse @iso_string
+        @time = Time.parse @iso_string
+        @datetime = DateTime.parse @iso_string
+      end
+      
+      context "with a Date" do
+
+        should "return a dd-mm-yyyy date string" do
+          assert_equal '02-03-2001', @connection.quoted_datetime(@date)
+        end
+
+      end
+
+      context "when the ActiveRecord default timezone is UTC" do
+
+        setup do
+          @old_activerecord_timezone = ActiveRecord::Base.default_timezone
+          ActiveRecord::Base.default_timezone = :utc
+        end
+
+        teardown do
+          ActiveRecord::Base.default_timezone = @old_activerecord_timezone
+          @old_activerecord_timezone = nil
+        end
+
+        context "with a Time" do
+
+          should "return an ISO 8601 datetime string" do
+            assert_equal '2001-02-03T11:05:06.000', @connection.quoted_datetime(@time)
+          end
+
+        end
+
+        context "with a DateTime" do
+
+          should "return an ISO 8601 datetime string" do
+            assert_equal '2001-02-03T11:05:06', @connection.quoted_datetime(@datetime)
+          end
+
+        end
+
+        context "with an ActiveSupport::TimeWithZone" do
+
+          context "wrapping a datetime" do
+
+            should "return an ISO 8601 datetime string with milliseconds" do
+              Time.use_zone('Eastern Time (US & Canada)') do
+                assert_equal '2001-02-03T11:05:06.000', @connection.quoted_datetime(@datetime.in_time_zone)
+              end
+            end
+
+          end
+
+          context "wrapping a time" do
+
+            should "return an ISO 8601 datetime string with milliseconds" do
+              Time.use_zone('Eastern Time (US & Canada)') do
+                assert_equal '2001-02-03T11:05:06.000', @connection.quoted_datetime(@time.in_time_zone)
+              end
+            end
+
+          end
+
+        end
+
+      end
+
+    end
+      
   end
   
   context 'When disabling referential integrity' do
@@ -400,18 +522,18 @@ class AdapterTestSqlserver < ActiveRecord::TestCase
     context "finding out what user_options are available" do
       
       should "run the database consistency checker useroptions command" do
-        @connection.expects(:select_rows).with(regexp_matches(/^dbcc\s+useroptions$/i)).returns []
-        @connection.user_options
+        keys = [:textsize, :language, :isolation_level, :dateformat]
+        user_options = @connection.user_options
+        keys.each do |key|
+          msg = "Expected key:#{key} in user_options:#{user_options.inspect}"
+          assert user_options.key?(key), msg
+        end
       end
       
       should "return a underscored key hash with indifferent access of the results" do
-        @connection.expects(:select_rows).with(regexp_matches(/^dbcc\s+useroptions$/i)).returns [['some', 'thing'], ['isolation level', 'read uncommitted']]
-        uo = @connection.user_options
-        assert_equal 2, uo.keys.size
-        assert_equal 'thing', uo['some']
-        assert_equal 'thing', uo[:some]
-        assert_equal 'read uncommitted', uo['isolation_level']
-        assert_equal 'read uncommitted', uo[:isolation_level]
+        user_options = @connection.user_options
+        assert_equal 'read committed', user_options['isolation_level']
+        assert_equal 'read committed', user_options[:isolation_level]
       end
       
     end unless sqlserver_azure?

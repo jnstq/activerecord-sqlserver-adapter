@@ -10,7 +10,7 @@ module ActiveRecord
           case value
           when String, ActiveSupport::Multibyte::Chars
             if column && column.type == :integer && value.blank?
-              nil
+              value.to_i.to_s
             elsif column && column.type == :binary
               column.class.string_to_binary(value)
             elsif value.is_utf8? || (column && column.type == :string)
@@ -67,7 +67,16 @@ module ActiveRecord
 
         def quoted_datetime(value)
           if value.acts_like?(:time)
-            value.is_a?(Date) ? quoted_value_acts_like_time_filter(value).to_time.xmlschema.to(18) : quoted_value_acts_like_time_filter(value).iso8601(3).to(22)
+            time_zone_qualified_value = quoted_value_acts_like_time_filter(value)
+            if value.is_a?(Date)
+              time_zone_qualified_value.to_time.xmlschema.to(18)
+            else
+              # CHANGED [Ruby 1.8] Not needed when 1.8 is dropped.
+              if value.is_a?(ActiveSupport::TimeWithZone) && RUBY_VERSION < '1.9'
+                time_zone_qualified_value = time_zone_qualified_value.to_time 
+              end
+              time_zone_qualified_value.iso8601(3).to(22)
+            end
           else
             quoted_date(value)
           end

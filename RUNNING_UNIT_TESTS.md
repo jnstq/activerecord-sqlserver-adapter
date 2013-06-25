@@ -9,7 +9,11 @@ This process is much easier than it has been before!
 Default testing uses DBLIB with TinyTDS.
 
 * Setup two databases in SQL Server, [activerecord_unittest] and [activerecord_unittest2]
-* Create a [rails] user with an empty password and give it a Server Role of sysadmin to both DBs.
+* Create a [rails] user with an empty password and give it a [db_owner] role to both DBs. Some tests require a server role of [sysadmin] too.
+  - http://twitpic.com/9bsiyp/full
+  - http://twitpic.com/9bsj7z/full
+  - http://twitpic.com/9bsjdx/full
+  - http://twitpic.com/9bsjl7/full
 * $ git clone git://github.com/rails-sqlserver/activerecord-sqlserver-adapter.git
 * $ bundle install
 * $ bundle exec rake test ACTIVERECORD_UNITTEST_HOST='my.db.net'
@@ -49,7 +53,7 @@ $ export ACTIVERECORD_UNITTEST_HOST='my.db.net'   # Defaults to localhost
 $ export ACTIVERECORD_UNITTEST_PORT='1533'        # Defaults to 1433
 ```
 
-If you have FreeTDS 0.82 installed and/or want to use a named dataserver in your freetds.conf file
+If you have FreeTDS installed and/or want to use a named dataserver in your freetds.conf file
 
 ```
 $ export ACTIVERECORD_UNITTEST_DATASERVER='mydbname'
@@ -91,8 +95,7 @@ By default, Bundler will download the Rails git repo and use the git tag that ma
 
 ## Current Expected Failures
 
-Note that there are a few tests that we just did not even try to pass and hence coerced into passing. The biggest are a collection found in our relations_test_sqlserver.rb file. If you run into problems and think you can make the Arel visitor pass these test, patches are very much welcome.
-
-* Misc Date/Time object instance matches when using ODBC mode.
+* Misc Date/Time erros when using ODBC mode.
+* Misc Date/Time erros when testing SQL Server 2005.
 
 

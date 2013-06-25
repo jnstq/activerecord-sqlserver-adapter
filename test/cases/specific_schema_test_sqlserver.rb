@@ -47,6 +47,17 @@ class SpecificSchemaTestSqlserver < ActiveRecord::TestCase
       @edge_class = SqlServerEdgeSchema
     end
     
+    context 'with tinyint primary key' do
+      
+      should 'work with identity inserts and finders' do
+        record = SqlServerTinyintPk.new :name => '1'
+        record.id = 1
+        record.save!
+        assert_equal record, SqlServerTinyintPk.find(1)
+      end
+      
+    end
+    
     context 'with natural primary keys' do
 
       should 'work with identity inserts' do
@@ -62,6 +73,11 @@ class SpecificSchemaTestSqlserver < ActiveRecord::TestCase
         assert record.save
         assert_equal 12, record.reload.id
       end
+      
+      should 'use primary key for row table order in pagination sql' do
+        sql = /OVER \(ORDER BY \[natural_pk_data\]\.\[legacy_id\] ASC\)/
+        assert_sql(sql) { SqlServerNaturalPkData.limit(5).offset(5).all }
+      end
 
     end
     
@@ -74,6 +90,16 @@ class SpecificSchemaTestSqlserver < ActiveRecord::TestCase
         assert_equal r, @edge_class.first(:conditions => {'crazy]]quote' => 'crazyqoute'})
       end
 
+    end
+
+    context 'with column names that have spaces' do
+
+      should 'create record using a custom attribute reader and be able to load it back in' do
+        value = 'Saved value into a column that has a space in the name.'
+        record = @edge_class.create! :with_spaces => value
+        assert_equal value, @edge_class.find(record.id).with_spaces
+      end
+      
     end
     
     context 'with description column' do

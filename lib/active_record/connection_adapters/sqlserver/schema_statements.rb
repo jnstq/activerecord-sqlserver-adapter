@@ -8,9 +8,7 @@ module ActiveRecord
         end
 
         def tables(table_type = 'BASE TABLE')
-          info_schema_query do
-            select_values "SELECT #{lowercase_schema_reflection_sql('TABLE_NAME')} FROM INFORMATION_SCHEMA.TABLES #{"WHERE TABLE_TYPE = '#{table_type}'" if table_type} ORDER BY TABLE_NAME"
-          end
+          select_values "SELECT #{lowercase_schema_reflection_sql('TABLE_NAME')} FROM INFORMATION_SCHEMA.TABLES #{"WHERE TABLE_TYPE = '#{table_type}'" if table_type} ORDER BY TABLE_NAME", 'SCHEMA'
         end
 
         def table_exists?(table_name)
@@ -52,6 +50,7 @@ module ActiveRecord
         
         def remove_column(table_name, *column_names)
           raise ArgumentError.new("You must specify at least one column name.  Example: remove_column(:people, :first_name)") if column_names.empty?
+          ActiveSupport::Deprecation.warn 'Passing array to remove_columns is deprecated, please use multiple arguments, like: `remove_columns(:posts, :foo, :bar)`', caller if column_names.flatten!
           column_names.flatten.each do |column_name|
             remove_check_constraints(table_name, column_name)
             remove_default_constraint(table_name, column_name)
@@ -167,7 +166,7 @@ module ActiveRecord
             columns.ordinal_position,
             CASE
               WHEN columns.DATA_TYPE IN ('nchar','nvarchar') THEN columns.CHARACTER_MAXIMUM_LENGTH
-              ELSE COL_LENGTH(columns.TABLE_SCHEMA+'.'+columns.TABLE_NAME, columns.COLUMN_NAME)
+              ELSE COL_LENGTH('#{db_name_with_period}'+columns.TABLE_SCHEMA+'.'+columns.TABLE_NAME, columns.COLUMN_NAME)
             END AS [length],
             CASE
               WHEN columns.IS_NULLABLE = 'YES' THEN 1
@@ -177,25 +176,33 @@ module ActiveRecord
               WHEN KCU.COLUMN_NAME IS NOT NULL AND TC.CONSTRAINT_TYPE = N'PRIMARY KEY' THEN 1
               ELSE NULL
             END AS [is_primary],
-            CASE 
-              WHEN COLUMNPROPERTY(OBJECT_ID(columns.TABLE_SCHEMA+'.'+columns.TABLE_NAME), columns.COLUMN_NAME, 'IsIdentity') = 1 THEN 1
-              ELSE NULL
-            END AS [is_identity]
+            c.is_identity AS [is_identity]
             FROM #{db_name_with_period}INFORMATION_SCHEMA.COLUMNS columns
-            LEFT OUTER JOIN #{db_name_with_period}INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS TC 
-              ON TC.TABLE_NAME = columns.TABLE_NAME 
-              AND TC.CONSTRAINT_TYPE = N'PRIMARY KEY' 
+            LEFT OUTER JOIN #{db_name_with_period}INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS TC
+              ON TC.TABLE_NAME = columns.TABLE_NAME
+              AND TC.CONSTRAINT_TYPE = N'PRIMARY KEY'
             LEFT OUTER JOIN #{db_name_with_period}INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS KCU
               ON KCU.COLUMN_NAME = columns.COLUMN_NAME
               AND KCU.CONSTRAINT_NAME = TC.CONSTRAINT_NAME
               AND KCU.CONSTRAINT_CATALOG = TC.CONSTRAINT_CATALOG
               AND KCU.CONSTRAINT_SCHEMA = TC.CONSTRAINT_SCHEMA
+            INNER JOIN #{db_name}.sys.schemas AS s
+              ON s.name = columns.TABLE_SCHEMA
+              AND s.schema_id = s.schema_id
+            INNER JOIN #{db_name}.sys.objects AS o
+              ON s.schema_id = o.schema_id
+              AND o.is_ms_shipped = 0
+              AND o.type IN ('U', 'V')
+              AND o.name = columns.TABLE_NAME
+            INNER JOIN #{db_name}.sys.columns AS c
+              ON o.object_id = c.object_id
+              AND c.name = columns.COLUMN_NAME
             WHERE columns.TABLE_NAME = @0
             ORDER BY columns.ordinal_position
           }.gsub(/[ \t\r\n]+/,' ')
           binds = [['table_name', table_name]]
           binds << ['table_schema',table_schema] unless table_schema.blank?
-          results = info_schema_query { do_exec_query(sql, 'InfoSchema::ColumnDefinitions', binds) }
+          results = do_exec_query(sql, 'SCHEMA', binds)
           results.collect do |ci|
             ci = ci.symbolize_keys
             ci[:type] = case ci[:type]
@@ -214,7 +221,7 @@ module ActiveRecord
               real_table_name = table_name_or_views_table_name(table_name)
               real_column_name = views_real_column_name(table_name,ci[:name])
               col_default_sql = "SELECT c.COLUMN_DEFAULT FROM #{db_name_with_period}INFORMATION_SCHEMA.COLUMNS c WHERE c.TABLE_NAME = '#{real_table_name}' AND c.COLUMN_NAME = '#{real_column_name}'"
-              ci[:default_value] = info_schema_query { select_value(col_default_sql) }
+              ci[:default_value] = select_value col_default_sql, 'SCHEMA'
             end
             ci[:default_value] = case ci[:default_value]
                                  when nil, '(null)', '(NULL)'
@@ -228,13 +235,13 @@ module ActiveRecord
                                  end
             ci[:null] = ci[:is_nullable].to_i == 1 ; ci.delete(:is_nullable)
             ci[:is_primary] = ci[:is_primary].to_i == 1
-            ci[:is_identity] = ci[:is_identity].to_i == 1
+            ci[:is_identity] = ci[:is_identity].to_i == 1 unless [TrueClass, FalseClass].include?(ci[:is_identity].class)
             ci
           end
         end
         
         def remove_check_constraints(table_name, column_name)
-          constraints = info_schema_query { select_values("SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE where TABLE_NAME = '#{quote_string(table_name)}' and COLUMN_NAME = '#{quote_string(column_name)}'") }
+          constraints = select_values "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE where TABLE_NAME = '#{quote_string(table_name)}' and COLUMN_NAME = '#{quote_string(column_name)}'", 'SCHEMA'
           constraints.each do |constraint|
             do_execute "ALTER TABLE #{quote_table_name(table_name)} DROP CONSTRAINT #{quote_column_name(constraint)}"
           end
@@ -242,7 +249,7 @@ module ActiveRecord
 
         def remove_default_constraint(table_name, column_name)
           # If their are foreign keys in this table, we could still get back a 2D array, so flatten just in case.
-          select_all("EXEC sp_helpconstraint '#{quote_string(table_name)}','nomsg'").flatten.select do |row|
+          execute_procedure(:sp_helpconstraint, table_name, 'nomsg').flatten.select do |row|
             row['constraint_type'] == "DEFAULT on column #{column_name}"
           end.each do |row|
             do_execute "ALTER TABLE #{quote_table_name(table_name)} DROP CONSTRAINT #{row['constraint_name']}"
@@ -256,10 +263,6 @@ module ActiveRecord
         end
         
         # === SQLServer Specific (Misc Helpers) ========================= #
-        
-        def info_schema_query
-          log_info_schema_queries ? yield : ActiveRecord::Base.silence{ yield }
-        end
         
         def get_table_name(sql)
           if sql =~ /^\s*(INSERT|EXEC sp_executesql N'INSERT)\s+INTO\s+([^\(\s]+)\s*|^\s*update\s+([^\(\s]+)\s*/i
@@ -295,17 +298,15 @@ module ActiveRecord
         
         def view_information(table_name)
           table_name = Utils.unqualify_table_name(table_name)
-          view_info = info_schema_query { select_one("SELECT * FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_NAME = '#{table_name}'") }
+          view_info = select_one "SELECT * FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_NAME = '#{table_name}'", 'SCHEMA'
           if view_info
             view_info = view_info.with_indifferent_access
             if view_info[:VIEW_DEFINITION].blank? || view_info[:VIEW_DEFINITION].length == 4000
-              view_info[:VIEW_DEFINITION] = info_schema_query do
-                                              begin
-                                                select_values("EXEC sp_helptext #{quote_table_name(table_name)}").join
-                                              rescue
-                                                warn "No view definition found, possible permissions problem.\nPlease run GRANT VIEW DEFINITION TO your_user;"
-                                                nil
-                                              end
+              view_info[:VIEW_DEFINITION] = begin
+                                              select_values("EXEC sp_helptext #{quote_table_name(table_name)}", 'SCHEMA').join
+                                            rescue
+                                              warn "No view definition found, possible permissions problem.\nPlease run GRANT VIEW DEFINITION TO your_user;"
+                                              nil
                                             end
             end
           end
@@ -349,7 +350,7 @@ module ActiveRecord
 
         def set_identity_insert(table_name, enable = true)
           sql = "SET IDENTITY_INSERT #{table_name} #{enable ? 'ON' : 'OFF'}"
-          do_execute sql,'InfoSchema::SetIdentityInsert'
+          do_execute sql, 'SCHEMA'
         rescue Exception => e
           raise ActiveRecordError, "IDENTITY_INSERT could not be turned #{enable ? 'ON' : 'OFF'} for table #{table_name}"
         end

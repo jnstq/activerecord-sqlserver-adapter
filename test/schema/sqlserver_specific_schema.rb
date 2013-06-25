@@ -83,6 +83,7 @@ ActiveRecord::Schema.define do
     t.column :tinyint, :tinyint
     t.column :guid, :uniqueidentifier
     t.column 'crazy]]quote', :string
+    t.column 'with spaces', :string
   end
   execute %|ALTER TABLE [sql_server_edge_schemas] ADD [guid_newid] uniqueidentifier DEFAULT NEWID();|
   execute %|ALTER TABLE [sql_server_edge_schemas] ADD [guid_newseqid] uniqueidentifier DEFAULT NEWSEQUENTIALID();| unless sqlserver_azure?
@@ -90,6 +91,23 @@ ActiveRecord::Schema.define do
   create_table :no_pk_data, :force => true, :id => false do |t|
     t.string :name
   end
+  
+  # http://blogs.msdn.com/b/craigfr/archive/2008/03/19/ranking-functions-row-number.aspx
+  execute "IF EXISTS(SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'order_row_number') DROP TABLE order_row_number"
+  execute <<-ORDERROWNUMBERSQL
+    CREATE TABLE [order_row_number] (id int IDENTITY, a int, b int, c int)
+    CREATE UNIQUE CLUSTERED INDEX [idx_order_row_number_id] ON [order_row_number] ([id])
+    INSERT [order_row_number] VALUES (0, 1, 8)
+    INSERT [order_row_number] VALUES (0, 3, 6)
+    INSERT [order_row_number] VALUES (0, 5, 4)
+    INSERT [order_row_number] VALUES (0, 7, 2)
+    INSERT [order_row_number] VALUES (0, 9, 0)
+    INSERT [order_row_number] VALUES (1, 0, 9)
+    INSERT [order_row_number] VALUES (1, 2, 7)
+    INSERT [order_row_number] VALUES (1, 4, 5)
+    INSERT [order_row_number] VALUES (1, 6, 3)
+    INSERT [order_row_number] VALUES (1, 8, 1)
+  ORDERROWNUMBERSQL
   
   execute "IF EXISTS(SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'natural_pk_data') DROP TABLE natural_pk_data"
   execute <<-NATURALPKTABLESQL
@@ -110,6 +128,14 @@ ActiveRecord::Schema.define do
       description nvarchar(1000)
     )
   NATURALPKINTTABLESQL
+  
+  execute "IF EXISTS(SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'tinyint_pk_table') DROP TABLE tinyint_pk_table"
+  execute <<-TINYITPKTABLE
+    CREATE TABLE tinyint_pk_table(
+      id tinyint NOT NULL PRIMARY KEY,
+      name nvarchar(255)
+    )
+  TINYITPKTABLE
   
   create_table 'quoted-table', :force => true do |t|
   end

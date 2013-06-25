@@ -1,11 +1,11 @@
+# ActiveRecord SQL Server Adapter. For SQL Server 2005 And Higher.
 
-# SQL Server 2005/2008 & Azure Adapter For ActiveRecord
-
-The SQL Server adapter for ActiveRecord. If you need the adapter for SQL Server 2000, you are still in the right spot. Just install the latest 2.3.x version of the adapter. Note, we follow a rational versioning policy that tracks ActiveRecord. That means that our 2.3.x version of the adapter is only for the latest 2.3 version of Rails.
+The SQL Server adapter for ActiveRecord. If you need the adapter for SQL Server 2000, you are still in the right spot. Just install the latest 2.3.x version of the adapter. Note, we follow a rational versioning policy that tracks ActiveRecord. That means that our 2.3.x version of the adapter is only for the latest 2.3 version of Rails. We also have stable branches for each major/minor release of ActiveRecord.
 
 
 ## What's New
 
+* Rails 3.2 support. With explain (SHOWPLAN) support.
 * Deadlock victim retry logic using the #retry_deadlock_victim config.
 * Proper interface to configure the connection and TinyTDS app name reported to SQL Server.
 * Rails 3.1 prepared statement support leverages cached query plans.
@@ -19,7 +19,7 @@ The SQL Server adapter for ActiveRecord. If you need the adapter for SQL Server 
 
 #### Testing Rake Tasks Support
 
-This is a long story, but if you are not working with a legacy database and you can trust your schema.rb to setup you local development or test database, then we have adapter level support for rails :db rake tasks. Please read this wiki page for full details.
+This is a long story, but if you are not working with a legacy database and you can trust your schema.rb to setup your local development or test database, then we have adapter level support for rails :db rake tasks. Please read this wiki page for full details.
 
 http://wiki.github.com/rails-sqlserver/activerecord-sqlserver-adapter/rails-db-rake-tasks
 
@@ -40,10 +40,12 @@ This implementation has some limitations. To date we can only coerce date/time t
 
 #### Executing Stored Procedures
 
-Every class that sub classes ActiveRecord::Base will now have an execute_procedure class method to use. This method takes the name of the stored procedure which can be a string or symbol and any number of variables to pass to the procedure. Arguments will automatically be quoted per the connection's standards as normal. For example.
+Every class that sub classes ActiveRecord::Base will now have an execute_procedure class method to use. This method takes the name of the stored procedure which can be a string or symbol and any number of variables to pass to the procedure. Arguments will automatically be quoted per the connection's standards as normal. For example:
 
 ```ruby
 Account.execute_procedure :update_totals, 'admin', nil, true
+# Or with named parameters.
+Account.execute_procedure :update_totals, :named => 'params'
 ```
 
 #### Native Data Type Support
@@ -139,15 +141,6 @@ ActiveRecord::Base.table_name_prefix = 'dbo.'
 ```
 
 
-#### Schema Information Logging
-
-By default all queries to the INFORMATION_SCHEMA table is silenced. If you think logging these queries are useful, you can enable it by adding this like to a initializer file.
-
-```ruby
-ActiveRecord::ConnectionAdapters::SQLServerAdapter.log_info_schema_queries = true
-```
-
-
 #### Auto Connecting
 
 By default the adapter will auto connect to lost DB connections. For every query it will retry at intervals of 2, 4, 8, 16 and 32 seconds. During each retry it will callback out to ActiveRecord::Base.did_retry_sqlserver_connection(connection,count). When all retries fail, it will callback to ActiveRecord::Base.did_lose_sqlserver_connection(connection). Both implementations of these methods are to write to the rails logger, however, they make great override points for notifications like Hoptoad. If you want to disable automatic reconnections use the following in an initializer.
@@ -179,6 +172,42 @@ module ActiveRecord
 end
 ```
 
+#### Explain Support (SHOWPLAN)
+
+The 3.2 version of the adapter support ActiveRecord's explain features. In SQL Server, this is called the showplan. By default we use the `SHOWPLAN_ALL` option and format it using a simple table printer. So the following ruby would log the plan table below it.
+
+```ruby
+Car.where(:id => 1).explain
+```
+
+```
+EXPLAIN for: SELECT [cars].* FROM [cars] WHERE [cars].[id] = 1
++----------------------------------------------------+--------+--------+--------+----------------------+----------------------+----------------------------------------------------+----------------------------------------------------+--------------+---------------------+----------------------+------------+---------------------+----------------------------------------------------+----------+----------+----------+--------------------+
+| StmtText                                           | StmtId | NodeId | Parent | PhysicalOp           | LogicalOp            | Argument                                           | DefinedValues                                      | EstimateRows | EstimateIO          | EstimateCPU          | AvgRowSize | TotalSubtreeCost    | OutputList                                         | Warnings | Type     | Parallel | EstimateExecutions |
++----------------------------------------------------+--------+--------+--------+----------------------+----------------------+----------------------------------------------------+----------------------------------------------------+--------------+---------------------+----------------------+------------+---------------------+----------------------------------------------------+----------+----------+----------+--------------------+
+| SELECT [cars].* FROM [cars] WHERE [cars].[id] = 1  |      1 |      1 |      0 | NULL                 | NULL                 | 2                                                  | NULL                                               |          1.0 | NULL                | NULL                 | NULL       | 0.00328309996984899 | NULL                                               | NULL     | SELECT   | false    | NULL               |
+|   |--Clustered Index Seek(OBJECT:([activerecord... |      1 |      2 |      1 | Clustered Index Seek | Clustered Index Seek | OBJECT:([activerecord_unittest].[dbo].[cars].[P... | [activerecord_unittest].[dbo].[cars].[id], [act... |          1.0 | 0.00312500004656613 | 0.000158099996042438 |        278 | 0.00328309996984899 | [activerecord_unittest].[dbo].[cars].[id], [act... | NULL     | PLAN_ROW | false    |                1.0 |
++----------------------------------------------------+--------+--------+--------+----------------------+----------------------+----------------------------------------------------+----------------------------------------------------+--------------+---------------------+----------------------+------------+---------------------+----------------------------------------------------+----------+----------+----------+--------------------+
+```
+
+You can configure a few options to your needs. First is the max column width for the logged table. The default value is 50 characters. You can change it like so.
+
+```ruby
+ActiveRecord::ConnectionAdapters::Sqlserver::Showplan::PrinterTable.max_column_width = 500
+```
+
+Another configuration is the showplan option. Some might find the XML format more useful. If you have Nokogiri installed, we will format the XML string. I will gladly accept pathces that make the XML printer more useful!
+
+```ruby
+ActiveRecord::ConnectionAdapters::SQLServerAdapter.showplan_option = 'SHOWPLAN_XML'
+```
+
+**NOTE:** The method we utilize to make SHOWPLANs work is very brittle to complex SQL. There is no getting around this as we have to deconstruct an already prepared statement for the sp_executesql method. If you find that explain breaks your app, simple disable it. Do not open a github issue unless you have a patch. To disable explain, just set the threshold to nil. Please [consult the Rails guides](http://guides.rubyonrails.org/active_record_querying.html#running-explain) for more info. Change this setting in your ```config/environments/development.rb```:
+
+```ruby
+config.active_record.auto_explain_threshold_in_seconds = nil
+```
+
 
 ## Versions
 
@@ -202,7 +231,7 @@ http://wiki.github.com/rails-sqlserver/activerecord-sqlserver-adapter/platform-i
 
 ## Contributing
 
-If you wouldd like to contribute a feature or bugfix, thanks! To make sure your fix/feature has a high chance of being added, please read the following guidelines. First, ask on the Google list, IRC, or post a ticket on github issues. Second, make sure there are tests! We will not accept any patch that is not tested. Please read the `RUNNING_UNIT_TESTS` file for the details of how to run the unit tests.
+If you would like to contribute a feature or bugfix, thanks! To make sure your fix/feature has a high chance of being added, please read the following guidelines. First, ask on the Google list, IRC, or post a ticket on github issues. Second, make sure there are tests! We will not accept any patch that is not tested. Please read the `RUNNING_UNIT_TESTS` file for the details of how to run the unit tests.
 
 * Github: http://github.com/rails-sqlserver/activerecord-sqlserver-adapter
 * Google Group: http://groups.google.com/group/rails-sqlserver-adapter
@@ -234,7 +263,7 @@ Up-to-date list of contributors: http://github.com/rails-sqlserver/activerecord-
 
 ## Donators
 
-I am trying to save up for a Happy Hacking pro keyboard. Help me out! http://pledgie.com/campaigns/15531
+I am trying to save up for a Happy Hacking pro keyboard. Help me out via GitTip! https://www.gittip.com/metaskills/
 
 
 ## License
